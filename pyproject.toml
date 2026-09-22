@@ -1,0 +1,24 @@
+[project]
+name = "kalshi-natgas-bot"
+version = "0.1.0"
+description = "Data collection and research tooling for Kalshi KXNATGAS15M (15-minute natural gas) markets"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+natgas-bot = "natgas_bot.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/natgas_bot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

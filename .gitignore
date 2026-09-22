@@ -1,0 +1,57 @@
+# Python / tooling
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Data (never commit collected data, snapshots, or exports)
+data/*
+!data/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+*.sqlite
+*.sqlite3
+*.csv
+*.parquet
+backups/
+
+# Backtest / paper-trading outputs and notebooks' scratch output
+runs/
+reports/
+.ipynb_checkpoints/
+
+# Secrets and machine-specific config (hosts, keys, deploy details)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*.local
+*.local.*
+local/
+deploy/
+ops/
+
+# Private notes / assistant context
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+graphify-out/
+notes/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
