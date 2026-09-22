@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 from typing import Any
 
 import httpx
@@ -10,6 +11,22 @@ import httpx
 log = logging.getLogger(__name__)
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+class RateLimiter:
+    """Spaces requests at least 1/rate seconds apart. No bursts: Kalshi rejects short bursts
+    well below its per-second average (20/s evenly spaced passes, 30/s gets 429s)."""
+
+    def __init__(self, rate: float):
+        self.interval = 1.0 / rate
+        self.next = 0.0
+
+    async def acquire(self) -> None:
+        now = time.monotonic()
+        t = max(now, self.next)
+        self.next = t + self.interval
+        if t > now:
+            await asyncio.sleep(t - now)
 
 
 async def request_json(
@@ -21,11 +38,14 @@ async def request_json(
     json: Any = None,
     max_attempts: int = 5,
     base_delay: float = 0.5,
+    limiter: RateLimiter | None = None,
 ) -> Any:
     """HTTP request returning parsed JSON, retrying on network errors, 429 and 5xx."""
     attempt = 0
     while True:
         attempt += 1
+        if limiter is not None:
+            await limiter.acquire()
         try:
             resp = await client.request(method, url, params=params, json=json)
         except httpx.TransportError as exc:

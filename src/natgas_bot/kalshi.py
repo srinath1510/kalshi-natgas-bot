@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from .http_util import request_json
+from .http_util import RateLimiter, request_json
 
 _FRACTION = re.compile(r"\.(\d+)")
 
@@ -153,14 +153,16 @@ def _clean(params: dict[str, Any] | None) -> dict[str, Any]:
 
 
 class KalshiClient:
-    def __init__(self, http: httpx.AsyncClient, base_url: str, base_delay: float = 0.5):
+    def __init__(self, http: httpx.AsyncClient, base_url: str, base_delay: float = 0.5, max_rps: float | None = None):
         self.http = http
         self.base = base_url.rstrip("/")
         self.base_delay = base_delay
+        self.limiter = RateLimiter(max_rps) if max_rps else None
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return await request_json(
-            self.http, "GET", f"{self.base}{path}", params=_clean(params), base_delay=self.base_delay
+            self.http, "GET", f"{self.base}{path}", params=_clean(params), base_delay=self.base_delay,
+            limiter=self.limiter,
         )
 
     async def _paginate(self, path: str, key: str, params: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:

@@ -1,3 +1,4 @@
+from natgas_bot.kalshi import parse_market
 from natgas_bot.sessions import classify
 from natgas_bot.verify import build_report, check_chaining, export_windows_csv, find_gaps, find_ties, session_stats
 
@@ -44,3 +45,18 @@ def test_report_and_proxy(loaded_db, tmp_path):
     out = tmp_path / "w.csv"
     assert export_windows_csv(loaded_db, out) == 40
     assert "sunday_reopen" in out.read_text()
+
+
+def test_report_is_scoped_to_one_series(loaded_db, gold_markets, tmp_path):
+    for m in gold_markets:
+        loaded_db.upsert_window(parse_market(m), m)
+    for r in loaded_db.windows():
+        coin = "xyz:GOLD" if r["ticker"].startswith("KXGOLD15M-") else "xyz:NATGAS"
+        loaded_db.insert_proxy("hyperliquid", coin, r["close_ts"] - 2000, {"oraclePx": str(r["settle"])})
+    assert len(loaded_db.windows()) == 80
+    for series, coin, other in [("KXNATGAS15M", "xyz:NATGAS", "xyz:GOLD"), ("KXGOLD15M", "xyz:GOLD", "xyz:NATGAS")]:
+        report = build_report(loaded_db, series)
+        assert f"{series} windows: 40 total" in report
+        assert "35/35 contiguous pairs match" in report
+        assert f"oracle:{coin}" in report and f"oracle:{other}" not in report
+    assert export_windows_csv(loaded_db, tmp_path / "g.csv", "KXGOLD15M") == 40

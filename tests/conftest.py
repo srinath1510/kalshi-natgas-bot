@@ -62,11 +62,13 @@ REAL_WINDOWS = [
 ]
 
 
-def make_market(open_utc: str, target: float, settle: float | None, result: str, volume: float) -> dict:
+def make_market(
+    open_utc: str, target: float, settle: float | None, result: str, volume: float, series: str = "KXNATGAS15M"
+) -> dict:
     o = datetime.fromisoformat(open_utc).replace(tzinfo=timezone.utc)
     c = o + timedelta(minutes=15)
     et_close = c - timedelta(hours=4)  # EDT
-    event = f"KXNATGAS15M-{et_close.strftime('%y%b%d%H%M').upper()}"
+    event = f"{series}-{et_close.strftime('%y%b%d%H%M').upper()}"
     return {
         "ticker": f"{event}-{et_close.strftime('%M')}",
         "event_ticker": event,
@@ -86,6 +88,12 @@ def make_market(open_utc: str, target: float, settle: float | None, result: str,
 @pytest.fixture
 def real_markets() -> list[dict]:
     return [make_market(*w) for w in REAL_WINDOWS]
+
+
+@pytest.fixture
+def gold_markets() -> list[dict]:
+    """Synthetic KXGOLD15M windows at the same times as REAL_WINDOWS, on a gold-sized price scale."""
+    return [make_market(o, t * 1000, s * 1000, r, v, series="KXGOLD15M") for o, t, s, r, v in REAL_WINDOWS]
 
 
 @pytest.fixture

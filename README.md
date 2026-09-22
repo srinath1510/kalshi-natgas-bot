@@ -2,6 +2,8 @@
 
 Data collection and research tooling for Kalshi's **KXNATGAS15M** series: 15-minute
 "Natural Gas price up?" contracts that settle on Pyth's 24/7 NATGAS index.
+The collector also records the other 15-minute commodity series (KXGOLD15M, KXWTI15M, KXSILVER15M,
+KXCOPPER15M, KXPLATINUM15M, KXPALLADIUM15M), which use the same contract template on their own Pyth indices.
 
 Everything here is **read-only public data**. No API keys, no order placement.
 
@@ -29,7 +31,7 @@ uv run pytest              # offline tests, no network needed
 ## Commands
 
 ```bash
-# 1. Backfill every settled window since the series launched (walks back until 14 empty days)
+# 1. Backfill every settled window of every configured series since launch (walks back until 14 empty days)
 uv run natgas-bot backfill
 
 #    ...optionally with each window's full trade tape and ~3.4 days of Hyperliquid NATGAS 1m candles
@@ -42,7 +44,8 @@ uv run natgas-bot backfill --since 2026-09-01 --until 2026-09-23
 caffeinate -i uv run natgas-bot collect
 
 # 3. Report: chaining, ties, gaps, session stats, proxy error. Optional per-window CSV.
-uv run natgas-bot verify --csv data/windows.csv
+uv run natgas-bot verify --csv data/windows.csv            # default --series KXNATGAS15M
+uv run natgas-bot verify --series KXGOLD15M
 
 uv run natgas-bot status   # row counts
 
@@ -58,11 +61,11 @@ uv run natgas-bot backup --out backups --keep 3
 | books | 1s | `orderbook_snapshots` | stored when the book changes, or every 15s if unchanged |
 | trades | 2s | `trades` | incremental by timestamp, deduped by `trade_id` |
 | settlements | 60s | `windows`, `trades` | records settlements, then fetches each closed window's full tape |
-| proxy | 2s | `proxy_ticks` | Hyperliquid `xyz` dex coins matching `*NATGAS*` (oracle, mark, mid) |
+| proxy | 2s | `proxy_ticks` | Hyperliquid `xyz` proxies for every series (NATGAS, GOLD, CL, SILVER, COPPER, PLATINUM, PALLADIUM; one request) |
 
 Every row has `recv_ts` (local receive time, epoch ms UTC), so keep the clock NTP-synced.
 A failing loop logs to `heartbeats` and retries; the others keep running.
-Storage is roughly 1.5-2 GB/week (measured), dominated by order-book snapshots and trades.
+Storage is roughly 1 GB/week for NATGAS alone and ~7 GB/week for all 7 series, dominated by order-book snapshots and trades.
 
 ## Report sections (`verify`)
 
@@ -77,8 +80,9 @@ Storage is roughly 1.5-2 GB/week (measured), dominated by order-book snapshots a
 ## Configuration
 
 All optional, via environment variables (see `.env.example`): DB path, Kalshi base URL, series,
-Hyperliquid dexes/coins, and every poll interval. Defaults stay well inside public rate limits
-(Kalshi: ~3 reads/s; Hyperliquid: 30 of 60 allowed info calls/min).
+Hyperliquid dexes/coins, and every poll interval. Kalshi requests are evenly spaced at
+`KALSHI_MAX_RPS` (default 15/s; live polling of 7 series needs ~12/s; Kalshi returns 429s on bursts,
+which are retried). Hyperliquid: 30 of 60 allowed info calls/min.
 
 ## Known unknowns
 

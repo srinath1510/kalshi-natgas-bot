@@ -19,6 +19,12 @@ from .sessions import SESSIONS, classify, is_maintenance_gap, is_weekend_gap, to
 
 Row = Any  # sqlite3.Row or dict with window columns
 
+# Hyperliquid coin (after the "dex:" prefix) that proxies each series' Pyth index.
+PROXY_COIN = {
+    "KXNATGAS15M": "NATGAS", "KXGOLD15M": "GOLD", "KXWTI15M": "CL", "KXSILVER15M": "SILVER",
+    "KXCOPPER15M": "COPPER", "KXPLATINUM15M": "PLATINUM", "KXPALLADIUM15M": "PALLADIUM",
+}
+
 
 def _eq5(a: float, b: float) -> bool:
     return round(a, 5) == round(b, 5)
@@ -89,10 +95,17 @@ def session_stats(rows: Sequence[Row]) -> dict[str, dict[str, float]]:
     return out
 
 
-def proxy_errors(db: DB, rows: Sequence[Row], max_lag_ms: int = 10_000) -> dict[str, dict[str, dict[str, float]]]:
-    """Error (cents) of each proxy vs the Kalshi settlement print, grouped by source/coin then session."""
+def _coins_for(coins: list[str], series: str) -> list[str]:
+    name = PROXY_COIN.get(series)
+    return [c for c in coins if name and c.split(":")[-1] == name]
+
+
+def proxy_errors(
+    db: DB, rows: Sequence[Row], series: str = "KXNATGAS15M", max_lag_ms: int = 10_000
+) -> dict[str, dict[str, dict[str, float]]]:
+    """Error (cents) of the series' proxy vs the Kalshi settlement print, grouped by source/coin then session."""
     samples: dict[str, dict[str, list[float]]] = {}
-    for coin in db.proxy_coins():
+    for coin in _coins_for(db.proxy_coins(), series):
         for r in rows:
             if r["settle"] is None or r["close_ts"] is None:
                 continue
@@ -101,7 +114,7 @@ def proxy_errors(db: DB, rows: Sequence[Row], max_lag_ms: int = 10_000) -> dict[
                 continue
             key = f"oracle:{coin}"
             samples.setdefault(key, {}).setdefault(classify(r["open_ts"]), []).append((tick["oracle_px"] - r["settle"]) * 100)
-    for coin in db.candle_coins():
+    for coin in _coins_for(db.candle_coins(), series):
         for r in rows:
             if r["settle"] is None or r["close_ts"] is None:
                 continue
@@ -128,10 +141,10 @@ def _fmt_ts(ms: int) -> str:
     return to_et(ms).strftime("%a %Y-%m-%d %H:%M ET")
 
 
-def build_report(db: DB, max_list: int = 15) -> str:
-    rows = db.windows()
+def build_report(db: DB, series: str = "KXNATGAS15M", max_list: int = 15) -> str:
+    rows = db.windows(series)
     settled = [r for r in rows if r["settle"] is not None]
-    lines = [f"windows: {len(rows)} total, {len(settled)} settled"]
+    lines = [f"{series} windows: {len(rows)} total, {len(settled)} settled"]
     if rows:
         lines.append(f"range:   {_fmt_ts(rows[0]['open_ts'])}  ->  {_fmt_ts(rows[-1]['open_ts'])}")
 
@@ -149,7 +162,7 @@ def build_report(db: DB, max_list: int = 15) -> str:
     for p, c, a, b in gaps[:max_list]:
         lines.append(f"  {_fmt_ts(a)} -> {_fmt_ts(b)}  ({p} -> {c})")
 
-    lines += ["", "SESSIONS  (moves in cents of the NATGAS index over the 15-minute window)"]
+    lines += ["", f"SESSIONS  (moves in cents of the {series} index over the 15-minute window)"]
     lines.append(f"  {'session':<15}{'n':>6}{'yes%':>7}{'|move| med':>12}{'p90':>8}{'max':>8}{'vol med':>10}")
     for s, st in session_stats(rows).items():
         lines.append(
@@ -157,7 +170,7 @@ def build_report(db: DB, max_list: int = 15) -> str:
             f"{st['abs_move_c_p90']:>8.2f}{st['abs_move_c_max']:>8.2f}{st['volume_median']:>10.0f}"
         )
 
-    perr = proxy_errors(db, rows)
+    perr = proxy_errors(db, rows, series)
     lines += ["", "PROXY ERROR vs Kalshi settlement (cents; + means proxy above settlement)"]
     if not perr:
         lines.append("  no proxy data yet (run `natgas-bot collect`, or `backfill --proxy-candles`)")
@@ -172,8 +185,8 @@ def build_report(db: DB, max_list: int = 15) -> str:
     return "\n".join(lines)
 
 
-def export_windows_csv(db: DB, path: Path) -> int:
-    rows = db.windows()
+def export_windows_csv(db: DB, path: Path, series: str | None = None) -> int:
+    rows = db.windows(series)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         w = csv.writer(f)

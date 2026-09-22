@@ -42,12 +42,13 @@ class Collector:
         """
         now_s = int(time.time())
         known: dict[str, Window] = {}
-        async for m in self.kalshi.iter_markets(
-            series_ticker=self.cfg.series_ticker, min_close_ts=now_s, max_close_ts=now_s + self.cfg.tracker_lookahead_s
-        ):
-            w = parse_market(m)
-            self.db.upsert_window(w, m)
-            known[w.ticker] = w
+        for series in self.cfg.series_tickers:
+            async for m in self.kalshi.iter_markets(
+                series_ticker=series, min_close_ts=now_s, max_close_ts=now_s + self.cfg.tracker_lookahead_s
+            ):
+                w = parse_market(m)
+                self.db.upsert_window(w, m)
+                known[w.ticker] = w
         self.known = known
         self._refresh_active()
 
@@ -65,33 +66,46 @@ class Collector:
             self._last_book_store.pop(ticker, None)
         self.active = active
 
+    @staticmethod
+    async def _each(tickers: list[str], fn: Callable[[str], Awaitable[None]]) -> None:
+        """Run fn for every ticker concurrently; one failing ticker doesn't stop the others."""
+        results = await asyncio.gather(*(fn(t) for t in tickers), return_exceptions=True)
+        errors = [r for r in results if isinstance(r, BaseException)]
+        if errors:
+            raise errors[0]
+
     async def poll_books(self) -> None:
         self._refresh_active()
-        for ticker in list(self.active):
-            payload = await self.kalshi.get_orderbook(ticker)
-            recv = now_ms()
-            book = parse_orderbook(payload)
-            changed = self._last_book.get(ticker) != book
-            stale = recv - self._last_book_store.get(ticker, 0) >= self.cfg.orderbook_keepalive_s * 1000
-            if changed or stale:
-                self.db.insert_book(ticker, recv, book)
-                self._last_book[ticker] = book
-                self._last_book_store[ticker] = recv
+        await self._each(list(self.active), self._poll_book)
+
+    async def _poll_book(self, ticker: str) -> None:
+        payload = await self.kalshi.get_orderbook(ticker)
+        recv = now_ms()
+        book = parse_orderbook(payload)
+        changed = self._last_book.get(ticker) != book
+        stale = recv - self._last_book_store.get(ticker, 0) >= self.cfg.orderbook_keepalive_s * 1000
+        if changed or stale:
+            self.db.insert_book(ticker, recv, book)
+            self._last_book[ticker] = book
+            self._last_book_store[ticker] = recv
 
     async def poll_trades(self) -> None:
         self._refresh_active()
-        for ticker in list(self.active):
-            last = self.db.latest_trade_ts(ticker)
-            min_ts_s = (last // 1000) - 5 if last else None  # small overlap; inserts are idempotent
-            await fetch_trades_for(self.kalshi, self.db, ticker, min_ts_s)
+        await self._each(list(self.active), self._poll_trades)
+
+    async def _poll_trades(self, ticker: str) -> None:
+        last = self.db.latest_trade_ts(ticker)
+        min_ts_s = (last // 1000) - 5 if last else None  # small overlap; inserts are idempotent
+        await fetch_trades_for(self.kalshi, self.db, ticker, min_ts_s)
 
     async def sweep_settlements(self) -> None:
         """Record settlements for recently closed windows and complete their trade tapes."""
         now_s = int(time.time())
-        async for m in self.kalshi.iter_markets(
-            series_ticker=self.cfg.series_ticker, min_close_ts=now_s - 3 * 3600, max_close_ts=now_s
-        ):
-            self.db.upsert_window(parse_market(m), m)
+        for series in self.cfg.series_tickers:
+            async for m in self.kalshi.iter_markets(
+                series_ticker=series, min_close_ts=now_s - 3 * 3600, max_close_ts=now_s
+            ):
+                self.db.upsert_window(parse_market(m), m)
         for ticker in self.db.windows_needing_trades(now_ms() - 60_000, now_ms() - 3 * 3600 * 1000):
             if ticker in self.active:
                 continue
@@ -138,7 +152,7 @@ class Collector:
 
     async def run(self, stop: asyncio.Event) -> None:
         cfg = self.cfg
-        self.db.heartbeat("collector", "start", f"series={cfg.series_ticker}")
+        self.db.heartbeat("collector", "start", f"series={','.join(cfg.series_tickers)}")
         loops = [
             ("tracker", cfg.tracker_interval_s, self.track_markets),
             ("books", cfg.orderbook_interval_s, self.poll_books),

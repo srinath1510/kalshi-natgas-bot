@@ -13,10 +13,16 @@ def _csv(value: str) -> tuple[str, ...]:
 class Config:
     db_path: Path = Path("data/natgas.db")
     kalshi_base_url: str = "https://api.elections.kalshi.com/trade-api/v2"
-    series_ticker: str = "KXNATGAS15M"
+    kalshi_max_rps: float = 15.0  # evenly spaced cap; live polling of 7 series needs ~12/s, public limit ~20/s
+    # All Kalshi 15-minute commodity series (Pyth-settled, same COMMODITIES contract template).
+    series_tickers: tuple[str, ...] = (
+        "KXNATGAS15M", "KXGOLD15M", "KXWTI15M", "KXSILVER15M", "KXCOPPER15M", "KXPLATINUM15M", "KXPALLADIUM15M",
+    )
     hl_info_url: str = "https://api.hyperliquid.xyz/info"
     hl_dexes: tuple[str, ...] = ("xyz",)
-    hl_coins: tuple[str, ...] = ()  # empty -> auto-discover coins whose name contains NATGAS
+    hl_coins: tuple[str, ...] = (  # empty -> auto-discover coins whose name contains NATGAS
+        "xyz:NATGAS", "xyz:GOLD", "xyz:CL", "xyz:SILVER", "xyz:COPPER", "xyz:PLATINUM", "xyz:PALLADIUM",
+    )
     orderbook_interval_s: float = 1.0
     trades_interval_s: float = 2.0
     tracker_interval_s: float = 5.0
@@ -32,10 +38,11 @@ class Config:
         return cls(
             db_path=Path(db_path or env.get("NATGAS_DB_PATH", "data/natgas.db")),
             kalshi_base_url=env.get("KALSHI_BASE_URL", cls.kalshi_base_url),
-            series_ticker=env.get("KALSHI_SERIES", cls.series_ticker),
+            kalshi_max_rps=float(env.get("KALSHI_MAX_RPS", cls.kalshi_max_rps)),
+            series_tickers=_csv(env["KALSHI_SERIES"]) if "KALSHI_SERIES" in env else cls.series_tickers,
             hl_info_url=env.get("HL_INFO_URL", cls.hl_info_url),
             hl_dexes=_csv(env.get("HL_DEXES", "xyz")),
-            hl_coins=_csv(env.get("HL_COINS", "")),
+            hl_coins=_csv(env["HL_COINS"]) if "HL_COINS" in env else cls.hl_coins,
             orderbook_interval_s=float(env.get("ORDERBOOK_INTERVAL_S", 1.0)),
             trades_interval_s=float(env.get("TRADES_INTERVAL_S", 2.0)),
             tracker_interval_s=float(env.get("TRACKER_INTERVAL_S", 5.0)),

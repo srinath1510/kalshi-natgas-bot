@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 
 import httpx
+import pytest
 
 from natgas_bot.collector import Collector
 from natgas_bot.config import Config
@@ -113,6 +114,55 @@ def test_sweep_marks_closed_windows(db, real_markets, monkeypatch):
     assert all(rows[m["ticker"]]["trades_backfilled"] == 1 for m in real_markets[-3:])
 
 
+def test_tracks_and_polls_every_series(db, real_markets, gold_markets, monkeypatch):
+    fake = FakeKalshi(real_markets + gold_markets)
+    ng, gold = real_markets[-1]["ticker"], gold_markets[-1]["ticker"]
+    _freeze(monkeypatch, "2026-09-22T18:50")
+    fake.books[ng] = [{"orderbook": {"yes": [[45, 100]], "no": [[52, 30]]}}]
+    fake.books[gold] = [{"orderbook": {"yes": [[60, 10]], "no": [[30, 5]]}}]
+    fake.trades[gold] = [{"trade_id": "g1", "ticker": gold, "created_time": "2026-09-22T18:46:00Z",
+                          "yes_price": 60, "no_price": 40, "count": 3, "taker_side": "yes"}]
+
+    async def go():
+        col, http = _collector(db, fake, series_tickers=("KXNATGAS15M", "KXGOLD15M"))
+        async with http:
+            await col.track_markets()
+            assert set(col.active) == {ng, gold}
+            await col.poll_books()
+            await col.poll_trades()
+
+    asyncio.run(go())
+    books = dict(db.conn.execute("SELECT ticker, best_yes_bid FROM orderbook_snapshots").fetchall())
+    assert books == {ng: 0.45, gold: 0.60}
+    assert [r[0] for r in db.conn.execute("SELECT ticker FROM trades")] == [gold]
+    series_listed = {p["series_ticker"] for path, p in fake.calls if path == "/markets"}
+    assert series_listed == {"KXNATGAS15M", "KXGOLD15M"}
+
+
+def test_one_failing_book_does_not_block_others(db, real_markets, gold_markets, monkeypatch):
+    fake = FakeKalshi(real_markets + gold_markets)
+    ng, gold = real_markets[-1]["ticker"], gold_markets[-1]["ticker"]
+    _freeze(monkeypatch, "2026-09-22T18:50")
+    fake.books[gold] = [{"orderbook": {"yes": [[60, 10]], "no": []}}]
+    handle = fake.handle
+
+    def flaky(request):
+        if request.url.path.endswith(f"/{ng}/orderbook"):
+            return httpx.Response(404, json={"error": "gone"})
+        return handle(request)
+    fake.handle = flaky
+
+    async def go():
+        col, http = _collector(db, fake, series_tickers=("KXNATGAS15M", "KXGOLD15M"))
+        async with http:
+            await col.track_markets()
+            with pytest.raises(httpx.HTTPStatusError):
+                await col.poll_books()
+
+    asyncio.run(go())
+    assert [r[0] for r in db.conn.execute("SELECT ticker FROM orderbook_snapshots")] == [gold]
+
+
 def test_proxy_parse_select_and_poll(db):
     hl = FakeHyperliquid()
     pairs = parse_meta_and_ctxs([{"universe": hl.universe}, hl.ctxs])
@@ -125,8 +175,10 @@ def test_proxy_parse_select_and_poll(db):
             await col.poll_proxy()
 
     asyncio.run(go())
-    row = db.conn.execute("SELECT coin, oracle_px, mark_px FROM proxy_ticks").fetchone()
+    row = db.conn.execute("SELECT coin, oracle_px, mark_px FROM proxy_ticks WHERE coin = 'xyz:NATGAS'").fetchone()
     assert tuple(row) == ("xyz:NATGAS", 3.1372, 3.1375)
+    assert {r[0] for r in db.conn.execute("SELECT coin FROM proxy_ticks")} == {"xyz:NATGAS", "xyz:GOLD", "xyz:CL"}
+    assert len(hl.bodies) == 1  # all proxies come from one request per dex
     assert hl.bodies[0] == {"type": "metaAndAssetCtxs", "dex": "xyz"}
 
 
@@ -172,3 +224,30 @@ def test_run_survives_unreachable_api(db):
     asyncio.run(go())
     statuses = {r[0] for r in db.conn.execute("SELECT DISTINCT status FROM heartbeats")}
     assert {"start", "error", "stop"} <= statuses
+
+
+def test_config_series_and_coins_from_env(monkeypatch):
+    assert Config.from_env().series_tickers[0] == "KXNATGAS15M"
+    assert {"KXGOLD15M", "KXWTI15M"} <= set(Config.from_env().series_tickers)
+    monkeypatch.setenv("KALSHI_SERIES", "KXGOLD15M, KXWTI15M")
+    monkeypatch.setenv("HL_COINS", "")
+    cfg = Config.from_env()
+    assert cfg.series_tickers == ("KXGOLD15M", "KXWTI15M")
+    assert cfg.hl_coins == ()  # explicit empty -> auto-discover *NATGAS*
+
+
+def test_kalshi_rate_limit_caps_request_rate(db, real_markets):
+    """30 concurrent requests at max_rps=20 are spaced 50ms apart (~1.45s), not burst."""
+    import time
+    fake = FakeKalshi(real_markets)
+
+    async def go():
+        async with httpx.AsyncClient(transport=router(fake)) as http:
+            k = KalshiClient(http, BASE, base_delay=0, max_rps=20)
+            t0 = time.monotonic()
+            await asyncio.gather(*(k.get_orderbook(real_markets[0]["ticker"]) for _ in range(30)))
+            return time.monotonic() - t0
+
+    elapsed = asyncio.run(go())
+    assert 1.4 <= elapsed < 2.0
+    assert len(fake.calls) == 30

@@ -32,13 +32,14 @@ def _date(s: str) -> datetime:
 async def _clients(cfg: Config) -> AsyncIterator[tuple[KalshiClient, HyperliquidClient]]:
     headers = {"User-Agent": f"kalshi-natgas-bot/{__version__}"}
     async with httpx.AsyncClient(timeout=cfg.http_timeout_s, headers=headers) as http:
-        yield KalshiClient(http, cfg.kalshi_base_url), HyperliquidClient(http, cfg.hl_info_url)
+        yield KalshiClient(http, cfg.kalshi_base_url, max_rps=cfg.kalshi_max_rps), HyperliquidClient(http, cfg.hl_info_url)
 
 
 async def _backfill(cfg: Config, db: DB, args: argparse.Namespace) -> None:
     async with _clients(cfg) as (kalshi, hl):
-        n = await backfill_windows(kalshi, db, cfg.series_ticker, since=args.since, until=args.until)
-        log.info("windows upserted: %d", n)
+        for series in cfg.series_tickers:
+            n = await backfill_windows(kalshi, db, series, since=args.since, until=args.until)
+            log.info("%s windows upserted: %d", series, n)
         if args.trades:
             await backfill_trades(kalshi, db)
         if args.proxy_candles:
@@ -74,7 +75,8 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--no-proxy", action="store_true", help="skip Hyperliquid polling")
 
     v = sub.add_parser("verify", help="print the rules/sessions/proxy report")
-    v.add_argument("--csv", type=Path, help="also export one row per window to this CSV")
+    v.add_argument("--series", default="KXNATGAS15M", help="series to report on (default KXNATGAS15M)")
+    v.add_argument("--csv", type=Path, help="also export one row per window of the series to this CSV")
 
     sub.add_parser("status", help="row counts per table")
 
@@ -93,9 +95,9 @@ def main(argv: list[str] | None = None) -> None:
         elif args.cmd == "collect":
             asyncio.run(_collect(cfg, db, args))
         elif args.cmd == "verify":
-            print(build_report(db))
+            print(build_report(db, args.series))
             if args.csv:
-                print(f"\nwrote {export_windows_csv(db, args.csv)} rows to {args.csv}")
+                print(f"\nwrote {export_windows_csv(db, args.csv, args.series)} rows to {args.csv}")
         elif args.cmd == "status":
             for k, n in db.counts().items():
                 print(f"{k:<22}{n:>10}")

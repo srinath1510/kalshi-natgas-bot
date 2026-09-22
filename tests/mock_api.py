@@ -24,6 +24,8 @@ class FakeKalshi:
         self.calls.append((path, params))
         if path == "/markets":
             items = self.markets
+            if "series_ticker" in params:
+                items = [m for m in items if m["ticker"].startswith(params["series_ticker"] + "-")]
             if params.get("status") == "open":
                 items = [m for m in items if m["ticker"] in self.open_tickers]
             if "min_close_ts" in params:

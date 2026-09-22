@@ -164,10 +164,12 @@ class DB:
         )
         self.conn.commit()
 
-    def windows(self) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "SELECT * FROM windows WHERE open_ts IS NOT NULL ORDER BY open_ts, ticker"
-        ).fetchall()
+    def windows(self, series: str | None = None) -> list[sqlite3.Row]:
+        sql, args = "SELECT * FROM windows WHERE open_ts IS NOT NULL", []
+        if series:
+            sql += " AND ticker LIKE ?"
+            args.append(f"{series}-%")
+        return self.conn.execute(sql + " ORDER BY open_ts, ticker", args).fetchall()
 
     def windows_needing_trades(self, closed_before_ms: int, closed_after_ms: int | None = None) -> list[str]:
         sql = "SELECT ticker FROM windows WHERE trades_backfilled = 0 AND close_ts IS NOT NULL AND close_ts <= ?"
