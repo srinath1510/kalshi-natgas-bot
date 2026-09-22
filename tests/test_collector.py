@@ -212,7 +212,7 @@ def test_run_survives_unreachable_api(db):
 
     async def go():
         cfg = Config(tracker_interval_s=0.05, orderbook_interval_s=0.05, trades_interval_s=0.05,
-                     settlement_interval_s=0.05, hl_interval_s=0.05)
+                     settlement_interval_s=0.05, hl_interval_s=0.05, hl_ws_url="ws://127.0.0.1:9")
         async with httpx.AsyncClient(transport=httpx.MockTransport(down)) as http:
             col = Collector(cfg, db, KalshiClient(http, BASE, base_delay=0), HyperliquidClient(http, HL, base_delay=0))
             stop = asyncio.Event()
@@ -224,6 +224,7 @@ def test_run_survives_unreachable_api(db):
     asyncio.run(go())
     statuses = {r[0] for r in db.conn.execute("SELECT DISTINCT status FROM heartbeats")}
     assert {"start", "error", "stop"} <= statuses
+    assert db.conn.execute("SELECT COUNT(*) FROM heartbeats WHERE component = 'hl_ws' AND status = 'error'").fetchone()[0] >= 1
 
 
 def test_config_series_and_coins_from_env(monkeypatch):

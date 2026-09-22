@@ -61,7 +61,8 @@ uv run natgas-bot backup --out backups --keep 3
 | books | 1s | `orderbook_snapshots` | stored when the book changes, or every 15s if unchanged |
 | trades | 2s | `trades` | incremental by timestamp, deduped by `trade_id` |
 | settlements | 60s | `windows`, `trades` | records settlements, then fetches each closed window's full tape |
-| proxy | 2s | `proxy_ticks` | Hyperliquid `xyz` proxies for every series (NATGAS, GOLD, CL, SILVER, COPPER, PLATINUM, PALLADIUM; one request) |
+| hl_ws | stream | `hl_ctx`, `hl_bbo`, `hl_trades` | Hyperliquid WebSocket for the `xyz` proxies of every series (NATGAS, GOLD, CL, SILVER, COPPER, PLATINUM, PALLADIUM): oracle/mark/mid/funding/OI stored on change (~1/s pushes), best bid/offer and trades with exchange timestamps; one connection, auto-reconnect |
+| proxy | 60s | `proxy_ticks` | Hyperliquid REST `metaAndAssetCtxs` fallback and cross-check (weight 20 of the 1200/min per-IP budget) |
 
 Every row has `recv_ts` (local receive time, epoch ms UTC), so keep the clock NTP-synced.
 A failing loop logs to `heartbeats` and retries; the others keep running.

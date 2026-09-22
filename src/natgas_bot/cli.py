@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--proxy-days", type=float, default=3.4, help="days of proxy candles (HL keeps ~5000)")
 
     c = sub.add_parser("collect", help="run the live collector until Ctrl+C")
-    c.add_argument("--no-proxy", action="store_true", help="skip Hyperliquid polling")
+    c.add_argument("--no-proxy", action="store_true", help="skip the Hyperliquid proxy (REST poll and WebSocket)")
 
     v = sub.add_parser("verify", help="print the rules/sessions/proxy report")
     v.add_argument("--series", default="KXNATGAS15M", help="series to report on (default KXNATGAS15M)")

@@ -1,4 +1,5 @@
-"""Live collector: order books, trades, settlements, and the Hyperliquid proxy, on one clock.
+"""Live collector: order books, trades, settlements, and the Hyperliquid proxy (WebSocket stream
+plus a slow REST poll), on one clock.
 
 Every stored row carries recv_ts = local receive time (epoch ms), so keep the machine's
 clock NTP-synced. Each loop is independent: an error in one is logged to `heartbeats`
@@ -15,6 +16,7 @@ from .backfill import fetch_trades_for
 from .config import Config
 from .db import DB, now_ms
 from .hyperliquid import HyperliquidClient, select_coins
+from .hyperliquid_ws import HyperliquidStream
 from .kalshi import Book, KalshiClient, Window, parse_market, parse_orderbook
 
 log = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ class Collector:
         self._last_book: dict[str, Book] = {}
         self._last_book_store: dict[str, int] = {}
         self._announced_coins: set[str] = set()
+        self._proxy_coins: set[str] = set()  # coins found by the REST poll (used when hl_coins is empty)
 
     # --- loops -----------------------------------------------------------------
     async def track_markets(self) -> None:
@@ -126,7 +129,17 @@ class Collector:
                 if name not in self._announced_coins:
                     self._announced_coins.add(name)
                     log.info("hyperliquid proxy coin: %s (oraclePx=%s)", name, ctx.get("oraclePx"))
+                self._proxy_coins.add(name)
                 self.db.insert_proxy("hyperliquid", name, recv, ctx)
+
+    async def stream_proxy(self, stop: asyncio.Event) -> None:
+        """Hyperliquid WebSocket for the proxy coins; reconnects on its own until stop."""
+        coins = self.cfg.hl_coins
+        while not coins and not stop.is_set():  # auto-discovery: wait for the REST poll to find them
+            await asyncio.sleep(1)
+            coins = tuple(sorted(self._proxy_coins))
+        if coins:
+            await HyperliquidStream(self.cfg.hl_ws_url, coins, self.db).run(stop)
 
     # --- runner ----------------------------------------------------------------
     async def _loop(self, name: str, interval: float, fn: Callable[[], Awaitable[None]], stop: asyncio.Event) -> None:
@@ -161,7 +174,11 @@ class Collector:
             ("proxy", cfg.hl_interval_s, self.poll_proxy),
         ]
         tasks = [asyncio.create_task(self._loop(n, i, f, stop), name=n) for n, i, f in loops]
-        log.info("collector running (%s); Ctrl+C to stop", ", ".join(n for n, _, _ in loops))
+        names = [n for n, _, _ in loops]
+        if self.hl is not None:
+            tasks.append(asyncio.create_task(self.stream_proxy(stop), name="hl_ws"))
+            names.append("hl_ws")
+        log.info("collector running (%s); Ctrl+C to stop", ", ".join(names))
         try:
             await stop.wait()
         finally:

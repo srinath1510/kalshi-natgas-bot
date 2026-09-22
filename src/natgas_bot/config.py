@@ -28,7 +28,10 @@ class Config:
     tracker_interval_s: float = 5.0
     tracker_lookahead_s: int = 3600  # also fetch windows closing within this horizon (pre-created)
     settlement_interval_s: float = 60.0
-    hl_interval_s: float = 2.0  # Hyperliquid info calls cost weight 20 of 1200/min per IP
+    hl_ws_url: str = "wss://api.hyperliquid.xyz/ws"
+    # The WebSocket carries the proxy; the REST poll is a slow fallback/cross-check. metaAndAssetCtxs
+    # costs weight 20 of the 1200/min per-IP budget, which is shared with anything else on the host.
+    hl_interval_s: float = 60.0
     orderbook_keepalive_s: float = 15.0  # store an unchanged book at least this often
     http_timeout_s: float = 10.0
 
@@ -47,6 +50,7 @@ class Config:
             trades_interval_s=float(env.get("TRADES_INTERVAL_S", 2.0)),
             tracker_interval_s=float(env.get("TRACKER_INTERVAL_S", 5.0)),
             settlement_interval_s=float(env.get("SETTLEMENT_INTERVAL_S", 60.0)),
-            hl_interval_s=float(env.get("HL_INTERVAL_S", 2.0)),
+            hl_ws_url=env.get("HL_WS_URL", cls.hl_ws_url),
+            hl_interval_s=float(env.get("HL_INTERVAL_S", cls.hl_interval_s)),
             orderbook_keepalive_s=float(env.get("ORDERBOOK_KEEPALIVE_S", 15.0)),
         )

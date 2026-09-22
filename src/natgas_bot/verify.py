@@ -114,6 +114,15 @@ def proxy_errors(
                 continue
             key = f"oracle:{coin}"
             samples.setdefault(key, {}).setdefault(classify(r["open_ts"]), []).append((tick["oracle_px"] - r["settle"]) * 100)
+    for coin in _coins_for(db.hl_ctx_coins(), series):
+        for r in rows:
+            if r["settle"] is None or r["close_ts"] is None:
+                continue
+            ctx = db.hl_ctx_at_or_before(coin, r["close_ts"], max_lag_ms)
+            if ctx is None or ctx["oracle_px"] is None:
+                continue
+            key = f"ws_oracle:{coin}"
+            samples.setdefault(key, {}).setdefault(classify(r["open_ts"]), []).append((ctx["oracle_px"] - r["settle"]) * 100)
     for coin in _coins_for(db.candle_coins(), series):
         for r in rows:
             if r["settle"] is None or r["close_ts"] is None:

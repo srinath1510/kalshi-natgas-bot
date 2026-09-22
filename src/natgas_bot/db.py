@@ -81,6 +81,52 @@ CREATE TABLE IF NOT EXISTS proxy_candles (
     PRIMARY KEY (source, coin, open_ts)
 );
 
+-- Hyperliquid WebSocket (proxy coins). hl_ctx is stored on change of any price/funding/OI field,
+-- plus a keepalive row; hl_bbo and hl_trades carry the exchange timestamp (time, epoch ms).
+CREATE TABLE IF NOT EXISTS hl_ctx (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    coin TEXT NOT NULL,
+    recv_ts INTEGER NOT NULL,
+    oracle_px REAL,
+    mark_px REAL,
+    mid_px REAL,
+    impact_bid_px REAL,
+    impact_ask_px REAL,
+    premium REAL,
+    funding REAL,
+    open_interest REAL,
+    day_ntl_vlm REAL
+);
+CREATE INDEX IF NOT EXISTS idx_hl_ctx_coin_ts ON hl_ctx(coin, recv_ts);
+
+CREATE TABLE IF NOT EXISTS hl_bbo (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    coin TEXT NOT NULL,
+    time INTEGER,
+    recv_ts INTEGER NOT NULL,
+    bid_px REAL,
+    bid_sz REAL,
+    bid_n INTEGER,
+    ask_px REAL,
+    ask_sz REAL,
+    ask_n INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_hl_bbo_coin_time ON hl_bbo(coin, time);
+
+CREATE TABLE IF NOT EXISTS hl_trades (
+    coin TEXT NOT NULL,
+    tid INTEGER NOT NULL,
+    time INTEGER,
+    side TEXT,
+    px REAL,
+    sz REAL,
+    hash TEXT,
+    users TEXT,
+    recv_ts INTEGER,
+    PRIMARY KEY (coin, tid)
+);
+CREATE INDEX IF NOT EXISTS idx_hl_trades_coin_time ON hl_trades(coin, time);
+
 CREATE TABLE IF NOT EXISTS heartbeats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     recv_ts INTEGER NOT NULL,
@@ -231,6 +277,42 @@ class DB:
         )
         self.conn.commit()
 
+    def insert_hl_ctx(self, coin: str, recv_ts: int, ctx: dict[str, float | None]) -> None:
+        self.conn.execute(
+            """INSERT INTO hl_ctx (coin, recv_ts, oracle_px, mark_px, mid_px, impact_bid_px, impact_ask_px,
+                   premium, funding, open_interest, day_ntl_vlm)
+               VALUES (:coin, :recv_ts, :oracle_px, :mark_px, :mid_px, :impact_bid_px, :impact_ask_px,
+                   :premium, :funding, :open_interest, :day_ntl_vlm)""",
+            {"coin": coin, "recv_ts": recv_ts, **ctx},
+        )
+        self.conn.commit()
+
+    def insert_hl_bbo(self, recv_ts: int, bbo: dict[str, Any]) -> None:
+        self.conn.execute(
+            """INSERT INTO hl_bbo (coin, time, recv_ts, bid_px, bid_sz, bid_n, ask_px, ask_sz, ask_n)
+               VALUES (:coin, :time, :recv_ts, :bid_px, :bid_sz, :bid_n, :ask_px, :ask_sz, :ask_n)""",
+            {"recv_ts": recv_ts, **bbo},
+        )
+        self.conn.commit()
+
+    def insert_hl_trades(self, recv_ts: int, trades: list[dict[str, Any]]) -> None:
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO hl_trades (coin, tid, time, side, px, sz, hash, users, recv_ts)
+               VALUES (:coin, :tid, :time, :side, :px, :sz, :hash, :users, :recv_ts)""",
+            [{"recv_ts": recv_ts, **t} for t in trades],
+        )
+        self.conn.commit()
+
+    def hl_ctx_at_or_before(self, coin: str, ts: int, max_lag_ms: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            """SELECT * FROM hl_ctx WHERE coin = ? AND recv_ts <= ? AND recv_ts >= ?
+               ORDER BY recv_ts DESC LIMIT 1""",
+            (coin, ts, ts - max_lag_ms),
+        ).fetchone()
+
+    def hl_ctx_coins(self) -> list[str]:
+        return [r[0] for r in self.conn.execute("SELECT DISTINCT coin FROM hl_ctx ORDER BY coin")]
+
     def insert_candles(self, source: str, coin: str, candles: list[dict[str, Any]]) -> int:
         from .kalshi import num
 
@@ -277,5 +359,8 @@ class DB:
         self.conn.commit()
 
     def counts(self) -> dict[str, int]:
-        tables = ["windows", "orderbook_snapshots", "trades", "proxy_ticks", "proxy_candles", "heartbeats"]
+        tables = [
+            "windows", "orderbook_snapshots", "trades", "proxy_ticks", "proxy_candles",
+            "hl_ctx", "hl_bbo", "hl_trades", "heartbeats",
+        ]
         return {t: self.conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
