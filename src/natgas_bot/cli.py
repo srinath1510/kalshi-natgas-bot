@@ -13,6 +13,7 @@ from typing import AsyncIterator
 import httpx
 
 from . import __version__
+from . import futures
 from .backfill import backfill_proxy_candles, backfill_trades, backfill_windows
 from .collector import Collector
 from .config import Config
@@ -84,9 +85,17 @@ def main(argv: list[str] | None = None) -> None:
     k.add_argument("--out", type=Path, required=True, help="backup directory")
     k.add_argument("--keep", type=int, default=3, help="number of newest backups to keep")
 
+    f = sub.add_parser("futures-bars", help="archive free delayed 1m NG futures bars (no DB needed)")
+    f.add_argument("--out", type=Path, required=True, help="directory for ng-1m-YYYY-MM-DD.csv.gz files")
+    f.add_argument("--days", type=int, default=10, help="days to (re)fetch; Yahoo keeps ~30 days of 1m bars")
+
     args = p.parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request is too noisy
+    if args.cmd == "futures-bars":
+        for path in futures.run(args.out, args.days):
+            print(path)
+        return
     cfg = Config.from_env(args.db)
     db = DB(cfg.db_path)
     try:

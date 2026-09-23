@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent: archive free delayed 1m NG futures bars twice a day (runs on wake if missed).
+     Install: scripts/install_pull_backup.sh -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.natgas-bot.futures-bars</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.local/bin/natgas-bot</string>
+    <string>futures-bars</string>
+    <string>--out</string>
+    <string>__HOME__/natgas-backups/futures</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/natgas-futures-bars.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/natgas-futures-bars.log</string>
+</dict>
+</plist>

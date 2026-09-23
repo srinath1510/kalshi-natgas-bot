@@ -51,6 +51,9 @@ uv run natgas-bot status   # row counts
 
 # 4. Consistent gzipped snapshot of the DB (safe while the collector runs), keeping the newest 3
 uv run natgas-bot backup --out backups --keep 3
+
+# 5. Archive free delayed 1m NYMEX NG futures bars (Yahoo keeps ~30 days), one gzipped CSV per UTC day
+uv run natgas-bot futures-bars --out data/futures --days 29
 ```
 
 ## What the collector records
